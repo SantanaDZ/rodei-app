@@ -1,0 +1,236 @@
+{
+  "name": "Rodei - Bot WhatsApp",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "rodei-whatsapp",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-evolution",
+      "name": "Webhook Evolution API",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [-1200, 0],
+      "notes": "Configure essa URL como webhook da instância no Evolution API (evento MESSAGES_UPSERT)."
+    },
+    {
+      "parameters": {
+        "jsCode": "// Normaliza o payload do Evolution API\nconst body = $input.first().json.body ?? $input.first().json;\nconst msg = body.data ?? body;\n\nconst telefone = (msg.key?.remoteJid || '').replace('@s.whatsapp.net', '');\nconst texto = msg.message?.conversation\n  || msg.message?.extendedTextMessage?.text\n  || '';\nconst fromMe = msg.key?.fromMe ?? false;\n\nreturn [{ json: { telefone, texto, fromMe } }];"
+      },
+      "id": "normaliza-payload",
+      "name": "Normaliza payload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-980, 0]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "loose" },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.fromMe }}",
+              "rightValue": false,
+              "operator": { "type": "boolean", "operation": "equals" }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "ignora-mensagens-do-bot",
+      "name": "É mensagem de entrada?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [-760, 0],
+      "notes": "Evita o bot reagir às próprias mensagens (fromMe: true)."
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.RODEI_APP_URL }}/api/users/lookup",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [{ "name": "telefone", "value": "={{ $json.telefone }}" }]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [{ "name": "x-internal-secret", "value": "={{ $env.RODEI_INTERNAL_SECRET }}" }]
+        },
+        "options": {}
+      },
+      "id": "busca-usuario",
+      "name": "Busca usuário",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [-540, -80]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "loose" },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.user }}",
+              "rightValue": null,
+              "operator": { "type": "object", "operation": "notEmpty" }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "usuario-existe",
+      "name": "Usuário já existe?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [-320, -80]
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=Você extrai dados financeiros de mensagens de motoristas de aplicativo (Uber/99). Extraia do texto abaixo: faturamento_bruto, km_rodado, horas_trabalhadas, gasto_combustivel, gasto_outros. Aceite valores em qualquer formato (280, R$280, 280 reais, 280,50). Retorne APENAS um JSON válido, sem nenhum texto antes ou depois, sem markdown. Campos não mencionados na mensagem devem ser null. Formato exato:\n{\"faturamento_bruto\": number|null, \"km_rodado\": number|null, \"horas_trabalhadas\": number|null, \"gasto_combustivel\": number|null, \"gasto_outros\": number|null}\n\nMensagem do motorista: \"{{ $json.texto }}\"",
+        "model": "claude-sonnet-4-6"
+      },
+      "id": "extrai-dados-ia",
+      "name": "Extrai dados (IA)",
+      "type": "n8n-nodes-base.anthropic",
+      "typeVersion": 1,
+      "position": [-80, -160],
+      "notes": "Use a credencial da Anthropic API. Ajuste o nome do node conforme a versão do n8n (pode ser 'Anthropic Chat Model' dentro de um node de IA)."
+    },
+    {
+      "parameters": {
+        "jsCode": "// Faz o parse do JSON retornado pela IA, tolerando texto solto ao redor\nconst raw = $input.first().json.text || $input.first().json.content || $input.first().json.output || '';\nlet parsed;\ntry {\n  const match = raw.match(/\\{[\\s\\S]*\\}/);\n  parsed = JSON.parse(match ? match[0] : raw);\n} catch (e) {\n  parsed = null;\n}\n\nreturn [{\n  json: {\n    parsed,\n    sucesso: !!(parsed && parsed.faturamento_bruto != null),\n    telefone: $('Normaliza payload').first().json.telefone,\n    texto_original: $('Normaliza payload').first().json.texto\n  }\n}];"
+      },
+      "id": "valida-json",
+      "name": "Valida JSON extraído",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [120, -160]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "loose" },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.sucesso }}",
+              "rightValue": true,
+              "operator": { "type": "boolean", "operation": "equals" }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "tem-faturamento",
+      "name": "Extraiu faturamento?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [320, -160]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.RODEI_APP_URL }}/api/records",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ telefone: $json.telefone, origem: 'whatsapp', faturamento_bruto: $json.parsed.faturamento_bruto, km_rodado: $json.parsed.km_rodado, horas_trabalhadas: $json.parsed.horas_trabalhadas, gasto_combustivel: $json.parsed.gasto_combustivel, gasto_outros: $json.parsed.gasto_outros }) }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [{ "name": "x-internal-secret", "value": "={{ $env.RODEI_INTERNAL_SECRET }}" }]
+        },
+        "options": {}
+      },
+      "id": "grava-registro",
+      "name": "Grava registro",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [540, -240]
+    },
+    {
+      "parameters": {
+        "resource": "messages-api",
+        "operation": "send-text",
+        "number": "={{ $('Normaliza payload').first().json.telefone }}",
+        "text": "=✅ Registrado! Faturou R$ {{ $json.record.faturamento_bruto }}{{ $json.record.km_rodado ? ', rodou ' + $json.record.km_rodado + 'km' : '' }}. Líquido do dia: R$ {{ (Number($json.record.faturamento_bruto) - Number($json.record.gasto_combustivel) - Number($json.record.gasto_outros)).toFixed(2) }} 🚗"
+      },
+      "id": "confirma-registro",
+      "name": "Confirma registro",
+      "type": "n8n-nodes-base.evolutionApi",
+      "typeVersion": 1,
+      "position": [760, -240],
+      "notes": "Substitua pelo node real do Evolution API configurado no seu n8n (community node)."
+    },
+    {
+      "parameters": {
+        "resource": "messages-api",
+        "operation": "send-text",
+        "number": "={{ $json.telefone }}",
+        "text": "=Não entendi direito o valor que você faturou hoje 🤔 Pode mandar de novo, tipo: \"Faturei 280, rodei 120km, gastei 60 de gasolina\"?"
+      },
+      "id": "pede-mais-info",
+      "name": "Pede pra refazer",
+      "type": "n8n-nodes-base.evolutionApi",
+      "typeVersion": 1,
+      "position": [540, -80],
+      "notes": "Substitua pelo node real do Evolution API."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.RODEI_APP_URL }}/api/users",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ telefone: $json.telefone }) }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [{ "name": "x-internal-secret", "value": "={{ $env.RODEI_INTERNAL_SECRET }}" }]
+        },
+        "options": {}
+      },
+      "id": "cria-usuario",
+      "name": "Cria usuário (onboarding)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [-80, 80],
+      "notes": "Onboarding simplificado: cria o cadastro só com o telefone. Nome/veículo podem ser preenchidos depois pelo formulário web."
+    },
+    {
+      "parameters": {
+        "resource": "messages-api",
+        "operation": "send-text",
+        "number": "={{ $('Normaliza payload').first().json.telefone }}",
+        "text": "=Boa! Eu sou o Rodei 🚗 Bora controlar seu faturamento? É só me mandar todo dia algo tipo:\n\n\"Faturei 280, rodei 120km, gastei 60 de gasolina\"\n\nQue eu calculo seu ganho líquido. Seu painel com relatório completo: {{ $env.RODEI_APP_URL }}/r/{{ $json.user.magic_token }}"
+      },
+      "id": "boas-vindas",
+      "name": "Mensagem de boas-vindas",
+      "type": "n8n-nodes-base.evolutionApi",
+      "typeVersion": 1,
+      "position": [120, 80],
+      "notes": "Substitua pelo node real do Evolution API."
+    }
+  ],
+  "connections": {
+    "Webhook Evolution API": { "main": [[{ "node": "Normaliza payload", "type": "main", "index": 0 }]] },
+    "Normaliza payload": { "main": [[{ "node": "É mensagem de entrada?", "type": "main", "index": 0 }]] },
+    "É mensagem de entrada?": { "main": [[{ "node": "Busca usuário", "type": "main", "index": 0 }]] },
+    "Busca usuário": { "main": [[{ "node": "Usuário já existe?", "type": "main", "index": 0 }]] },
+    "Usuário já existe?": {
+      "main": [
+        [{ "node": "Extrai dados (IA)", "type": "main", "index": 0 }],
+        [{ "node": "Cria usuário (onboarding)", "type": "main", "index": 0 }]
+      ]
+    },
+    "Cria usuário (onboarding)": { "main": [[{ "node": "Mensagem de boas-vindas", "type": "main", "index": 0 }]] },
+    "Extrai dados (IA)": { "main": [[{ "node": "Valida JSON extraído", "type": "main", "index": 0 }]] },
+    "Valida JSON extraído": { "main": [[{ "node": "Extraiu faturamento?", "type": "main", "index": 0 }]] },
+    "Extraiu faturamento?": {
+      "main": [
+        [{ "node": "Grava registro", "type": "main", "index": 0 }],
+        [{ "node": "Pede pra refazer", "type": "main", "index": 0 }]
+      ]
+    },
+    "Grava registro": { "main": [[{ "node": "Confirma registro", "type": "main", "index": 0 }]] }
+  }
+}

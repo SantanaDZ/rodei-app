@@ -1,0 +1,48 @@
+@import "tailwindcss";
+
+/* ============================================================
+   RODEI — design tokens
+   Inspirado no painel de instrumentos de um carro à noite:
+   leitura instantânea, números grandes, zero ornamento.
+   ============================================================ */
+:root {
+  --bg-base: #0d1310;       /* painel desligado */
+  --bg-panel: #161d18;      /* superfície dos cards */
+  --bg-panel-raised: #1d251f;
+  --hairline: #2a342c;
+
+  --odometer: #b4f42a;      /* verde-lima do odômetro — cor de assinatura */
+  --odometer-dim: #7ea328;
+  --alert: #ff8a3d;         /* gasto / atenção */
+  --danger: #ff5c5c;
+
+  --text-primary: #edf2ee;
+  --text-muted: #8a9690;
+  --text-faint: #545e55;
+}
+
+@theme inline {
+  --color-bg-base: var(--bg-base);
+  --color-bg-panel: var(--bg-panel);
+  --color-bg-panel-raised: var(--bg-panel-raised);
+  --color-hairline: var(--hairline);
+  --color-odometer: var(--odometer);
+  --color-odometer-dim: var(--odometer-dim);
+  --color-alert: var(--alert);
+  --color-danger: var(--danger);
+  --color-text-primary: var(--text-primary);
+  --color-text-muted: var(--text-muted);
+  --color-text-faint: var(--text-faint);
+  --font-display: var(--font-mono-display);
+  --font-sans: var(--font-body);
+}
+
+body {
+  background: var(--bg-base);
+  color: var(--text-primary);
+}
+
+.tabular {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
+}
